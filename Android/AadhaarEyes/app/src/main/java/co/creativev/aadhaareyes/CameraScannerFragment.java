@@ -6,6 +6,8 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
+import com.example.cardreader.MainActivity;
+
 import org.opencv.android.CameraBridgeViewBase;
 import org.opencv.android.JavaCameraView;
 import org.opencv.core.Core;
@@ -13,30 +15,31 @@ import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
-import org.opencv.core.Rect;
+import org.opencv.core.Point;
 import org.opencv.core.RotatedRect;
 import org.opencv.core.Scalar;
-import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-
-import static org.opencv.imgproc.Imgproc.CHAIN_APPROX_SIMPLE;
-import static org.opencv.imgproc.Imgproc.GaussianBlur;
-import static org.opencv.imgproc.Imgproc.RETR_TREE;
-import static org.opencv.imgproc.Imgproc.THRESH_BINARY;
-import static org.opencv.imgproc.Imgproc.approxPolyDP;
-import static org.opencv.imgproc.Imgproc.arcLength;
-import static org.opencv.imgproc.Imgproc.contourArea;
-import static org.opencv.imgproc.Imgproc.findContours;
-import static org.opencv.imgproc.Imgproc.minAreaRect;
-import static org.opencv.imgproc.Imgproc.threshold;
+import java.util.Random;
 
 public class CameraScannerFragment extends Fragment implements CameraBridgeViewBase.CvCameraViewListener2 {
 
     private JavaCameraView javaCameraView;
     private Mat screen;
+    private MainActivity nativeBridge;
+    private int random;
+    private int height;
+    private int width;
+    private int num;
+    private int[][] pt;
+    private Scalar grayColor;
+
+    public CameraScannerFragment() {
+        nativeBridge = new MainActivity();
+        random = new Random().nextInt();
+        grayColor = Scalar.all(184);
+    }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -74,38 +77,37 @@ public class CameraScannerFragment extends Fragment implements CameraBridgeViewB
 
     @Override
     public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
-        Mat newFrame = inputFrame.gray();
-        Mat rgba = inputFrame.rgba();
-        Mat gaussian = new Mat(newFrame.size(), CvType.CV_8UC4);
-        GaussianBlur(newFrame, gaussian, new Size(1, 1), 1, 1, 1000);
-        threshold(gaussian, gaussian, 120d, 255, THRESH_BINARY);
-        Mat hierarchy = new Mat();
+        Mat gray = inputFrame.gray().clone();
+        RotatedRect max = getBoundingRect(gray);
+        Point[] pt = new Point[4];
+        max.points(pt);
+        Mat out = inputFrame.gray();
+        Core.line(out, pt[0], pt[1], grayColor, 3);
+        Core.line(out, pt[1], pt[2], grayColor, 3);
+        Core.line(out, pt[2], pt[3], grayColor, 3);
+        Core.line(out, pt[3], pt[0], grayColor, 3);
+        return out;
+    }
+
+    private RotatedRect getBoundingRect(Mat gray) {
+        Imgproc.Canny(gray, gray, 100, 100);
+        Imgproc.dilate(gray, gray, Mat.ones(3, 3, CvType.CV_8UC1));
+        Imgproc.threshold(gray, gray, 0, 255, 8);
         ArrayList<MatOfPoint> contours = new ArrayList<>();
-        findContours(gaussian, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
-        Collections.sort(contours, new Comparator<MatOfPoint>() {
-            @Override
-            public int compare(MatOfPoint lhs, MatOfPoint rhs) {
-                double areaRhs = contourArea(rhs);
-                double areaLhs = contourArea(lhs);
-                return areaLhs < areaRhs ? -1 : areaLhs > areaRhs ? 1 : 0;
-            }
-        });
-        int rows = newFrame.rows();
-        int cols = newFrame.cols();
-        screen = gaussian.submat(0, rows, 0, cols);
-
-        Scalar FACE_RECT_COLOR = new Scalar(0, 255, 0, 255);
+        Imgproc.findContours(gray,
+                contours,
+                new Mat(),
+                Imgproc.RETR_EXTERNAL,
+                Imgproc.CHAIN_APPROX_NONE); // all pixels of each contour
+        double area = 0;
+        RotatedRect max = null;
         for (MatOfPoint contour : contours) {
-            MatOfPoint2f matOfPoint2f = new MatOfPoint2f(contour.toArray());
-            double v = arcLength(matOfPoint2f, true);
-            MatOfPoint2f curve = new MatOfPoint2f();
-            approxPolyDP(matOfPoint2f, curve, 0.02 * v, true);
-            RotatedRect rotatedRect = minAreaRect(curve);
-
-            Rect rect = rotatedRect.boundingRect();
-//            Core.rectangle(screen, rect.tl(), rect.br(), FACE_RECT_COLOR, 3);
+            RotatedRect rotatedRect = Imgproc.minAreaRect(new MatOfPoint2f(contour.toArray()));
+            if (area < rotatedRect.size.area()) {
+                area = rotatedRect.size.area();
+                max = rotatedRect;
+            }
         }
-
-        return screen;
+        return max;
     }
 }
